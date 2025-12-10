@@ -1,0 +1,5 @@
+{
+  "name": "SmartComic Reader",
+  "description": "A .cdz comic reader with local library management and Gemini-powered smart panel zooming.",
+  "requestFramePermissions": []
+}
