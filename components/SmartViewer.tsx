@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { analyzeComicPage } from '../services/geminiService';
 import { Panel } from '../types';
 import { Sparkles, ChevronRight, ChevronLeft, Loader2, AlertCircle, Bug, ScanEye } from 'lucide-react';
@@ -14,15 +14,27 @@ const SmartViewer: React.FC<SmartViewerProps> = ({ imageSrc }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showDebug, setShowDebug] = useState(false);
+  const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
     // New page loaded
     setPanels([]);
     setCurrentPanelIndex(-1);
     setError(null);
+    setImageDimensions({ width: 0, height: 0 });
     analyzeImage();
   }, [imageSrc]);
+
+  const handleImageLoad = useCallback(() => {
+    if (imageRef.current) {
+      setImageDimensions({
+        width: imageRef.current.offsetWidth,
+        height: imageRef.current.offsetHeight
+      });
+    }
+  }, []);
 
   const analyzeImage = async () => {
     setLoading(true);
@@ -59,40 +71,49 @@ const SmartViewer: React.FC<SmartViewerProps> = ({ imageSrc }) => {
 
   // Calculate transform for the current panel
   const getTransform = () => {
-    if (currentPanelIndex === -1 || panels.length === 0) {
+    if (currentPanelIndex === -1 || panels.length === 0 || imageDimensions.width === 0) {
       return { x: 0, y: 0, scale: 1 };
     }
 
     const panel = panels[currentPanelIndex];
+    const { width: imgWidth, height: imgHeight } = imageDimensions;
     
     // Panel coordinates are percentages (0-100)
-    // Convert to relative scale factors (0-1)
-    const px = panel.xmin / 100;
-    const py = panel.ymin / 100;
-    const pw = (panel.xmax - panel.xmin) / 100;
-    const ph = (panel.ymax - panel.ymin) / 100;
-
-    // Calculate scale needed to fill the screen with the panel
-    // We assume the image currently fills the screen (object-contain behavior)
-    // So zooming to 1/pw makes the panel width equal to the image width (which is approx screen width)
-    const scaleX = 1 / pw;
-    const scaleY = 1 / ph;
+    // Convert to pixel positions on the actual rendered image
+    const panelLeft = (panel.xmin / 100) * imgWidth;
+    const panelTop = (panel.ymin / 100) * imgHeight;
+    const panelRight = (panel.xmax / 100) * imgWidth;
+    const panelBottom = (panel.ymax / 100) * imgHeight;
     
-    // Use the smaller scale to ensure the whole panel fits
-    // Cap max zoom to avoid extreme pixelation
-    const scale = Math.min(Math.min(scaleX, scaleY) * 0.95, 5); 
+    const panelWidthPx = panelRight - panelLeft;
+    const panelHeightPx = panelBottom - panelTop;
 
-    // Calculate center of panel in percentage relative to image
-    const cx = px + pw / 2;
-    const cy = py + ph / 2;
+    // Get container/viewport dimensions
+    const viewportWidth = containerRef.current?.clientWidth || window.innerWidth;
+    const viewportHeight = containerRef.current?.clientHeight || window.innerHeight;
 
-    // Translation logic:
-    // We want the panel center (cx, cy) to end up at the viewport center (0.5, 0.5).
-    // The default transform origin is center (0.5, 0.5).
-    // We translate the image so the panel center moves to the image center.
-    // Shift = (0.5 - cx) * 100%
-    const tx = (0.5 - cx) * 100;
-    const ty = (0.5 - cy) * 100;
+    // Calculate scale needed to fill the viewport with the panel
+    const scaleX = viewportWidth / panelWidthPx;
+    const scaleY = viewportHeight / panelHeightPx;
+    
+    // Use the smaller scale to ensure the whole panel fits, with some padding
+    const scale = Math.min(Math.min(scaleX, scaleY) * 0.85, 5); 
+
+    // Calculate panel center in pixels (relative to image top-left)
+    const panelCenterX = panelLeft + panelWidthPx / 2;
+    const panelCenterY = panelTop + panelHeightPx / 2;
+
+    // Image center in pixels
+    const imageCenterX = imgWidth / 2;
+    const imageCenterY = imgHeight / 2;
+
+    // Translation needed to move panel center to image center
+    // Then the scaled image will be centered in viewport
+    // The transform origin is center, so we translate the difference
+    const tx = (imageCenterX - panelCenterX) * scale;
+    const ty = (imageCenterY - panelCenterY) * scale;
+
+    console.log(`Panel ${currentPanelIndex + 1}: img(${imgWidth}x${imgHeight}), panel(${panelWidthPx.toFixed(0)}x${panelHeightPx.toFixed(0)} at ${panelLeft.toFixed(0)},${panelTop.toFixed(0)}), scale=${scale.toFixed(2)}, translate(${tx.toFixed(0)}px, ${ty.toFixed(0)}px)`);
 
     return { x: tx, y: ty, scale };
   };
@@ -212,8 +233,8 @@ const SmartViewer: React.FC<SmartViewerProps> = ({ imageSrc }) => {
             initial={false}
             animate={{
                 scale: transform.scale,
-                x: `${transform.x}%`, 
-                y: `${transform.y}%`
+                x: transform.x, 
+                y: transform.y
             }}
             transition={{ 
                 type: "spring", 
@@ -223,10 +244,12 @@ const SmartViewer: React.FC<SmartViewerProps> = ({ imageSrc }) => {
             }}
         >
              <img 
+              ref={imageRef}
               src={imageSrc} 
               alt="Comic Page" 
               className="max-w-[100vw] max-h-[100vh] object-contain block select-none"
               draggable={false}
+              onLoad={handleImageLoad}
             />
             
             {/* Debug Overlay */}

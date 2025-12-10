@@ -27,13 +27,15 @@ const panelSchema: Schema = {
 
 export const analyzeComicPage = async (base64Image: string): Promise<Panel[]> => {
   try {
-    const apiKey = process.env.API_KEY;
-    if (!apiKey) throw new Error("API Key not found");
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+    console.log("API Key available:", !!apiKey, apiKey?.substring(0, 10) + "...");
+    if (!apiKey) throw new Error("API Key not found. Make sure GEMINI_API_KEY is set in .env.local");
 
     const ai = new GoogleGenAI({ apiKey });
     
     // Strip the data:image/...;base64, prefix if present
     const cleanBase64 = base64Image.replace(/^data:image\/\w+;base64,/, "");
+    console.log("Sending image to Gemini, base64 length:", cleanBase64.length);
 
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
@@ -58,10 +60,12 @@ export const analyzeComicPage = async (base64Image: string): Promise<Panel[]> =>
     });
 
     const text = response.text;
+    console.log("Gemini response:", text);
     if (!text) return [];
 
     const data = JSON.parse(text);
     const panels = data.panels as Panel[];
+    console.log("Detected panels:", panels.length);
 
     // Ensure IDs are present
     return panels.map((p, idx) => ({ ...p, id: `panel-${idx}` }));
